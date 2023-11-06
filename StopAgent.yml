@@ -1,0 +1,9 @@
+jobs:
+- job: StopAgent
+  displayName: 'Stop Agent'
+  pool:
+    name: default
+  steps:
+  - powershell: |
+      Stop-Service -Name "jimin01Agent" -ErrorAction SilentlyContinue
+    displayName: 'Stop jimin01Agent'
