@@ -1,0 +1,18 @@
+jobs: 
+- job: HostedAgent
+  pool:
+    vmImage: 'windows-latest'
+  steps:
+  - task: TerraformInstaller@0
+    inputs: 
+      terraformVersion: latest
+    displayName: Install Terraform
+  - script: |
+      echo "Agent: $(Agent)"
+      echo "dkns: $(dkns)"
+    displayName: 'Output Parameters'
+  - script: |
+      echo "##vso[task.setvariable variable=Agent]$(Agent)"
+      echo "##vso[task.setvariable variable=dkns]$(dkns)"
+    displayName: 'Set Variables'
+  - template: azure-vm-stop.yml  # Template reference

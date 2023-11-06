@@ -1,0 +1,64 @@
+steps:
+- script: |
+    az login --service-principal -u 0cd2a780-3598-4328-8db8-8b7ba273e024 -p 7wj8Q~ZoQE19B3yHSRlA9XoXzu63nIHjCWuI8a1Z --tenant c86959ed-45e5-47f5-8ef5-308ca79916fc
+    cd $(Agent.BuildDirectory)
+  displayName: 'Azure Login'
+
+- powershell: |
+    $TESTIMG = $env:TESTIMG -replace '"', ''
+    $ISSUE = $env:ISSUE -replace '"', ''
+    $TEST = $env:TEST -replace '"', ''
+
+    echo "TESTIMG: $env:TESTIMG"
+    echo "ISSUE: $env:ISSUE"
+    echo "TEST: $env:TEST"
+
+    $jsonOutput = az vm list --show-details --query "[?powerState=='VM deallocated']" | Out-String | ConvertFrom-Json
+    $Agent = $jsonOutput | Where-Object { $_.name -match "Agent" } | Select-Object -ExpandProperty name
+    $dkns = $jsonOutput | Where-Object { $_.name -match "dkns" } | Select-Object -ExpandProperty name
+
+    $Agent = $Agent | Select-Object -First 1
+    $dkns = $dkns | Select-Object -First 1
+
+
+    $AgentNumber = [regex]::Match($Agent, 'Agent(\d+)').Groups[1].Value
+    $dknsNumber = [regex]::Match($dkns, 'dkns(\d+)').Groups[1].Value
+
+    echo "가상 머신 $AgentNumber 확인 됨."
+    echo "가상 머신 $dknsNumber 확인 됨."
+
+    if ($AgentNumber -ne $dknsNumber) {
+      Write-Output "Agent$AgentNumber의 subnet을 dkns$dknsNumber subnet과 동일하게 변경 합니다."
+
+      az network nic update --ids "/subscriptions/f85dce05-6791-4464-afde-6ac8649b9b3d/resourceGroups/Automated_Test/providers/Microsoft.Network/networkInterfaces/Agent$AgentNumberVMNic" --set ipConfigurations[0].subnet.id="/subscriptions/f85dce05-6791-4464-afde-6ac8649b9b3d/resourceGroups/Automated_Test/providers/Microsoft.Network/virtualNetworks/DtlAutomated_Test/subnets/subnet-00$dknsNumber"
+    }
+
+    az vm start --name $Agent --resource-group Automated_Test
+    az vm start --name $dkns --resource-group Automated_Test
+
+    echo "가상 머신 $Agent 시작됨."
+    echo "가상 머신 $dkns 시작됨."
+
+    $AgentIP = az vm show -d -g Automated_Test -n $Agent --query publicIps -o tsv
+    $dknsIP = az vm show -d -g Automated_Test -n $dkns --query publicIps -o tsv
+
+    echo "공인IP $AgentIP"
+    echo "공인IP $dknsIP"
+
+    $ISSUEDKNS = $ISSUE -replace '-', '' -replace 'GN', 'gn'
+    $TESTIMGDKNS = $TESTIMG -replace 'CLOUD', 'DKNS' -replace '\.img$', ''
+
+    echo "DKNS SITE: $ISSUEDKNS"
+    echo "DKNS IMG: $TESTIMGDKNS"
+
+    icacls "$(Build.SourcesDirectory)/start/DKNS.pem" /inheritance:r
+    icacls "$(Build.SourcesDirectory)/start/DKNS.pem" /grant:r "$($env:USERNAME):R"
+
+    echo "pem 파일 권한 변경"
+
+    ssh -o StrictHostKeyChecking=no -i $(Build.SourcesDirectory)/start/DKNS.pem $dkns@$dknsIP "sudo sed -i 's#^DKNS_SERVER=.*#DKNS_SERVER=$ISSUEDKNS.demo.genians.co.kr#; s#^DKNS_IMAGE=.*#DKNS_IMAGE=genians/genian-nac6-ns-dev:$TESTIMGDKNS' /usr/geni/conf/genian.conf; sudo cat /usr/geni/conf/genian.conf; sudo reboot"
+
+    psexec -accepteula \\$AgentIP -u Tester -p Tester1234@! -i 1 -h cmd /C start /MIN C:/test.bat $TESTIMG $ISSUE $TEST $Agent $dkns
+  displayName: 'Azure Start VM/Run Test(PsExec)'
+  workingDirectory: $(Build.SourcesDirectory)/start
+  

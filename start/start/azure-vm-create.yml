@@ -1,0 +1,55 @@
+steps:
+- script: |
+    az login --service-principal -u 0cd2a780-3598-4328-8db8-8b7ba273e024 -p 7wj8Q~ZoQE19B3yHSRlA9XoXzu63nIHjCWuI8a1Z --tenant c86959ed-45e5-47f5-8ef5-308ca79916fc
+    cd $(Agent.BuildDirectory)
+  displayName: 'Azure Login'
+
+- powershell: |
+    echo "All Test Agents and DKNS are in use. Additional creation is in progress"
+
+    # 서브넷 리스트에서 가장 마지막에 생성 된 서브넷 번호 확인
+    $subnet_jsonOutput = az network vnet subnet list --resource-group Automated_Test --vnet-name DtlAutomated_Test | Out-String | ConvertFrom-Json
+    $subnet = $subnet_jsonOutput | Where-Object { $_.name -match "subnet-(\d+)" } | Select-Object -ExpandProperty name
+
+    $subnet = $subnet | Select-Object -Last 1
+    echo "가장 마지막에 생성 된 가상 머신 $subnet 확인 됨."
+
+    # 가장 마지막에 생성 된 서브넷 번호에 1을 더해 생성 할 서브넷 명과 서브넷 번호 정의
+    $subnetNumber = [int]($subnet -split "-")[1]
+    $subnetNumber++
+    $subnet = "subnet-{0:D4}" -f $subnetNumber
+    echo "생성 할 서브넷 명 : $subnet / 서브넷 번호 : $subnetNumber"
+
+    # 신규 서브넷 생성 및 기존 보안그룹 할당
+    az network vnet subnet create --resource-group Automated_Test --vnet-name DtlAutomated_Test --name $subnet --address-prefix 10.0.$subnetNumber.0/24 --network-security-group test-nsg
+
+    # 모든 Agent 및 DKNS 리스트 확인
+    $vm_jsonOutput = az vm list --show-details | Out-String | ConvertFrom-Json
+    $Agent = $vm_jsonOutput | Where-Object { $_.name -match "Agent(\d+)" } | Select-Object -ExpandProperty name
+    $dkns = $vm_jsonOutput | Where-Object { $_.name -match "dkns(\d+)" } | Select-Object -ExpandProperty name
+
+    # 가장 마지막 Agent, DKNS 번호 확인
+    $Agent = $Agent | Select-Object -Last 1
+    $dkns = $dkns | Select-Object -Last 1
+
+    $AgentNumber = [int]($Agent -split "Agent")[1]
+    $dknsNumber = [int]($dkns -split "dkns")[1]
+
+    $AgentNumber++
+    $dknsNumber++
+
+    $Agent = "Agent{0:D2}" -f $AgentNumber
+    $dkns = "dkns{0:D2}" -f $dknsNumber
+
+    echo "생성해야 할 가상 머신 $Agent 확인 됨."
+    echo "생성해야 할 가상 머신 $dkns 확인 됨."
+
+    # Agent에 맞는 번호의 PublicIP 할당
+    $PublicIP = $Agent + "PublicIP"
+
+    echo "할당해야 할 공인 IP 명 : $PublicIP"
+
+    # 위에서 정의한 내용들을 토대로 Agent VM 및 DKNS VM 생성 (생성해야 할 Agent VM 명, 서브넷, 공인IP)
+    az vm create --resource-group Automated_Test --name $Agent --computer-name $Agent --image "/subscriptions/f85dce05-6791-4464-afde-6ac8649b9b3d/resourceGroups/myGalleryRG/providers/Microsoft.Compute/galleries/myGallery/images/myImageDefinition" --admin-username Tester --admin-password Tester1234@! --specialized --vnet-name DtlAutomated_Test --subnet $subnet --size "Standard_B2ms" --security-type TrustedLaunch --public-ip-address $PublicIP --nsg test-nsg --enable-secure-boot false
+    az vm create --resource-group Automated_Test --name $dkns --computer-name $dkns --image "/subscriptions/f85dce05-6791-4464-afde-6ac8649b9b3d/resourceGroups/myGalleryRG/providers/Microsoft.Compute/galleries/myGallery/images/myImageDefinitionDKNS" --admin-username tester --admin-password Tester1234@! --specialized --vnet-name DtlAutomated_Test --subnet $subnet --size "Standard_B2s" --security-type TrustedLaunch --nsg test-nsg --enable-secure-boot false
+  displayName: 'Azure Create VM/DKNS'
